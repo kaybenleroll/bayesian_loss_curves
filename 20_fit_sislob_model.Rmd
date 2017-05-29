@@ -1,0 +1,162 @@
+---
+title: "Bayesian Loss Curves - "
+author: "Mick Cooney"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+    fig_caption: yes
+    theme: cerulean
+  pdf_document: default
+---
+
+<!--
+(Title:) Modelling Loss Curves in Insurance with RStan
+
+Author: Mick Cooney
+
+Date: `r Sys.Date()`
+
+Abstract: This case study shows a way to model the growth of losses using a hierarchical approach
+
+Keywords: loss curves, insurance,
+
+-->
+
+```{r knit_opts, include = FALSE}
+rm(list = ls())
+
+knitr::opts_chunk$set(tidy  = FALSE
+                     ,cache = FALSE
+                     ,fig.height =  8
+                     ,fig.width  = 11)
+
+library(tidyverse)
+library(scales)
+library(rstan)
+library(bayesplot)
+library(cowplot)
+library(feather)
+
+
+options(width = 80L)
+
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+
+
+set.seed(42)
+
+stan_seed <- 42
+
+source("custom_functions.R")
+```
+
+
+# Load Data
+
+```{r load_data, echo=TRUE}
+claimdata_tbl <- read_feather('data/claim_data.feather')
+```
+
+# Fit Stan Model
+
+```{r construct_data, echo=TRUE}
+use_grcode <- c(43,353,388,620)
+
+carrier_full_tbl <- claimdata_tbl %>%
+    filter(lob == 'ppauto')
+
+carrier_snapshot_tbl <- carrier_full_tbl %>%
+    filter(grcode %in% use_grcode
+          ,dev_year < 1998)
+
+snapshot_tbl <- carrier_snapshot_tbl %>%
+    filter(grcode %in% use_grcode[1])
+
+modeldata_tbl <- claimdata_tbl %>%
+    filter(lob == 'ppauto'
+          ,grcode == use_grcode[1])
+
+usedata_tbl <- modeldata_tbl %>%
+    filter(dev_year < 1998)
+
+cohort_maxtime <- usedata_tbl %>%
+    group_by(acc_year) %>%
+    summarise(maxtime = max(dev_lag)) %>%
+    arrange(acc_year) %>%
+    .[['maxtime']]
+
+cohort_premium <- usedata_tbl %>%
+    group_by(acc_year) %>%
+    summarise(premium = unique(premium)) %>%
+    .[['premium']]
+
+t_values <- usedata_tbl %>%
+    select(dev_lag) %>%
+    arrange(dev_lag) %>%
+    unique %>%
+    .[['dev_lag']]
+
+standata_lst <- list(
+    growthmodel_id = 1   # Use weibull rather than loglogistic
+   ,n_data         = usedata_tbl %>% nrow
+   ,n_time         = usedata_tbl %>% select(dev_lag)  %>% unique %>% nrow
+   ,n_cohort       = usedata_tbl %>% select(acc_year) %>% unique %>% nrow
+   ,cohort_id      = get_character_index(usedata_tbl$acc_year)
+   ,cohort_maxtime = cohort_maxtime
+   ,t_value        = t_values
+   ,t_idx          = get_character_index(usedata_tbl$dev_lag)
+   ,premium        = cohort_premium
+   ,loss           = usedata_tbl$cum_loss
+)
+```
+
+
+```{r sislob_compile_model, echo=TRUE, warning=FALSE, message=FALSE, results='hide'}
+stan_file <- "losscurves_sislob.stan"
+
+model_sislob_stanmodel <- stan_model(stan_file)
+```
+
+```{r sislob_fit_stan_model, echo=TRUE, warning=FALSE, message=FALSE}
+model_sislob_stanfit <- sampling(
+    object = model_sislob_stanmodel
+   ,data   = standata_lst
+   ,iter   = 500
+   ,chains = 8
+   ,seed   = stan_seed
+)
+```
+
+
+
+
+## Add Time-varying Variance
+
+We want to add a time-varying component for the variance, allowing the variance
+of the observed values to shrink as time passes.
+
+
+```{r sislob_decayvar_compile_model, echo=TRUE, warning=FALSE, message=FALSE, results='hide'}
+stan_file <- "losscurves_sislob_decayvar.stan"
+
+model_sislob_decayvar_stanmodel <- stan_model(stan_file, verbose=TRUE)
+```
+
+```{r sislob_decayvar_fit_stan_model, echo=TRUE, warning=FALSE, message=FALSE}
+model_sislob_decayvar_stanfit <- sampling(
+    object = model_sislob_decayvar_stanmodel
+   ,data   = standata_lst
+   ,iter   = 500
+   ,chains = 8
+   ,seed   = stan_seed
+)
+```
+
+
+
+
+
+

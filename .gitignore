@@ -1,0 +1,7 @@
+.Rhistory
+.RData
+
+*.rds
+
+data/*.feather
+data/*.csv

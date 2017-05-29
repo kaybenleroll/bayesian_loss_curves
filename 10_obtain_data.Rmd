@@ -1,0 +1,87 @@
+---
+title: "Bayesian Loss Curves - Data Loading"
+author: "Mick Cooney"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+    fig_caption: yes
+    theme: cerulean
+  pdf_document: default
+---
+
+<!--
+(Title:) Modelling Loss Curves in Insurance with RStan
+
+Author: Mick Cooney
+
+Date: `r Sys.Date()`
+
+Abstract: This case study shows a way to model the growth of losses using a hierarchical approach
+
+Keywords: loss curves, insurance,
+
+-->
+
+```{r knit_opts, include = FALSE}
+knitr::opts_chunk$set(tidy  = FALSE
+                     ,cache = FALSE
+                     ,fig.height =  8
+                     ,fig.width  = 11)
+
+library(tidyverse)
+library(feather)
+
+
+options(width = 80L)
+
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+
+
+set.seed(42)
+
+stan_seed <- 42
+
+source("custom_functions.R")
+```
+
+
+# Load Data
+
+```{r load_data, echo=TRUE}
+### File was downloaded from http://www.casact.org/research/reserve_data/ppauto_pos.csv
+data_files <- dir("data/", pattern = "\\.csv", full.names = TRUE)
+
+rawdata_tbl <- data_files %>%
+    map(read_claim_datafile) %>%
+    bind_rows
+
+rawdata_tbl %>% glimpse
+
+claimdata_tbl <- rawdata_tbl %>%
+    mutate(acc_year   = as.character(accidentyear)
+          ,dev_year   = developmentyear
+          ,dev_lag    = developmentlag
+          ,premium    = earnedpremdir
+          ,cum_loss   = cumpaidloss
+          ,loss_ratio = cum_loss / premium) %>%
+    select(grcode, grname, lob, acc_year, dev_year, dev_lag, premium, cum_loss, loss_ratio)
+
+claimdata_tbl %>% glimpse
+```
+
+
+# Write to Disk
+
+```{r write_disk, echo=TRUE}
+rawdata_tbl %>% write_csv    (path = 'data/rawdata.csv')
+rawdata_tbl %>% write_feather(path = 'data/rawdata.feather')
+
+claimdata_tbl %>% write_csv    (path = 'data/claim_data.csv')
+claimdata_tbl %>% write_feather(path = 'data/claim_data.feather')
+```
+
+
+
